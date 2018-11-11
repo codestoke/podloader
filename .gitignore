@@ -17,3 +17,6 @@
 
 # Output of the go coverage tool, specifically when used with LiteIDE
 *.out
+
+# vim swp files
+*.swp
