@@ -4,8 +4,12 @@ import (
 	"encoding/xml"
 	"flag"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"net/http"
+	"net/url"
+	"os"
+	"path"
 	"strings"
 )
 
@@ -44,12 +48,73 @@ func downloadRss(url string) string {
 }
 
 func getNumberAndEpisode(title string) (number string, episode string) {
-	strings.Split(title, ":")
+	parts := strings.Split(title, ":")
+	if len(parts) == 2 {
+
+	}
 	return "", ""
 }
 
-func downloadItem(item Item) {
-	getNumberAndEpisode(item.Title)
+func downloadAndSaveItem(episodeNumber int, item Item) {
+	filename := createFileName(item, episodeNumber)
+
+	resp, err := http.Get(item.Content.Url)
+	if err != nil {
+		panic(err)
+	}
+	defer resp.Body.Close()
+
+	file, err := os.Create(filename)
+	if err != nil {
+		panic(err)
+	}
+	defer file.Close()
+
+	written, err := io.Copy(file, resp.Body)
+	if err != nil {
+		panic(err)
+	}
+
+	fmt.Printf("%d bytes written\n", written)
+}
+
+func createFileName(item Item, episodeNumber int) string {
+	var u url.URL
+	u.Path = item.Content.Url
+	filename := path.Base(u.Path)
+	filename = fmt.Sprintf("SE-%07d_%s", episodeNumber, filename)
+	return filename
+}
+
+type WorkItem struct {
+	I Item
+	N int
+}
+
+var queue = make(chan WorkItem)
+var done = make(chan bool)
+
+func produce(q chan WorkItem, url string) {
+	content := downloadRss(url)
+
+	rss := Rss{}
+	xml.Unmarshal([]byte(content), &rss)
+
+	for i := len(rss.Channel.Items) - 1; i >= 0; i-- {
+		item := rss.Channel.Items[i]
+		if item.Content.Url != "" {
+			q <- WorkItem{I: item, N: i}
+		}
+	}
+
+	done <- true
+}
+
+func consume(q chan WorkItem) {
+	for {
+		item := <-q
+		downloadAndSaveItem(item.N, item.I)
+	}
 }
 
 func main() {
@@ -59,19 +124,18 @@ func main() {
 
 	fmt.Println("url = ", strings.TrimSpace(*url))
 
-	content := downloadRss(*url)
+	go produce(queue, *url)
 
-	rss := Rss{}
-	xml.Unmarshal([]byte(content), &rss)
+	go consume(queue)
+	go consume(queue)
+	go consume(queue)
+	go consume(queue)
 
-	//jsonrss, _ := json.MarshalIndent(rss, "", "    ")
+	<-done
 
-	//fmt.Printf("%+v\n", rss)
-	//fmt.Println(string(jsonrss))
-
-	for _, item := range rss.Channel.Items {
-		fmt.Println(item.Title)
-	}
+	//for _, item := range rss.Channel.Items {
+	//	fmt.Println(item.Title)
+	//}
 
 	//fmt.Println(content)
 }
